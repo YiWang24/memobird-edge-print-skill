@@ -13,6 +13,11 @@ const DEFAULT_WIDTH = 32;
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+
+  if (options.envFile) {
+    loadEnvFile(options.envFile);
+  }
+
   const envConfig = readEnvConfig();
 
   if (options.help) {
@@ -20,8 +25,13 @@ async function main() {
     return;
   }
 
+  if (options.emitEnv && !options.showIds) {
+    throw new Error('--emit-env requires --show-ids because it outputs real environment variable values.');
+  }
+
   const manualContextComplete = hasCompleteManualPrintContext(envConfig);
-  const needsLiveResolution = options.list || !manualContextComplete;
+  const hasManualEnvExportContext = Boolean(envConfig.loginInfo && manualContextComplete);
+  const needsLiveResolution = options.list || (!manualContextComplete) || (options.emitEnv && !hasManualEnvExportContext);
   const needsSession = needsLiveResolution || !options.dryRun;
 
   const session = needsSession
@@ -91,6 +101,22 @@ async function main() {
     t: String(Date.now()),
   });
 
+  if (options.emitEnv) {
+    const resolvedLoginInfo = envConfig.loginInfo || session?.loginInfo || '';
+    if (!resolvedLoginInfo) {
+      throw new Error('Cannot emit environment variables without a real MEMOBIRD_LOGININFO value.');
+    }
+
+    console.log(renderEnvFile({
+      loginInfo: resolvedLoginInfo,
+      fromUserName,
+      targetNote,
+      targetPrinter,
+      source: session?.source || 'manual-env',
+    }));
+    return;
+  }
+
   if (options.dryRun) {
     const preview = {
       sessionSource: session?.source || 'manual-env:no-session',
@@ -133,6 +159,8 @@ function parseArgs(argv) {
     list: false,
     help: false,
     showIds: false,
+    emitEnv: false,
+    envFile: '',
     text: '',
     file: '',
     device: '',
@@ -161,6 +189,12 @@ function parseArgs(argv) {
         break;
       case '--show-ids':
         options.showIds = true;
+        break;
+      case '--emit-env':
+        options.emitEnv = true;
+        break;
+      case '--env-file':
+        options.envFile = requireValue(argv, ++i, arg);
         break;
       case '--text':
       case '-t':
@@ -204,8 +238,10 @@ function printHelp() {
 Usage:
   node scripts/memobird-print.mjs --list
   node scripts/memobird-print.mjs --dry-run --text "hello"
+  node scripts/memobird-print.mjs --env-file .env.local --dry-run --text "hello"
   node scripts/memobird-print.mjs --device "My Memobird" --text "line one\\nline two"
   MEMOBIRD_LOGININFO='...' node scripts/memobird-print.mjs --list
+  node scripts/memobird-print.mjs --list --show-ids --emit-env
   echo "print from stdin" | node scripts/memobird-print.mjs
 
 Options:
@@ -218,6 +254,8 @@ Options:
       --no-wrap     Disable automatic wrapping
       --dry-run     Show resolved request payload without printing
       --list        Show logged-in user, notes, and printers
+      --emit-env    Print a .env-style block with the resolved real values
+      --env-file    Load variables from a .env-style file before running
       --show-ids    Reveal raw wrapped IDs instead of redacted output
       --debug       Print raw API response after PrintPaper
   -h, --help        Show this help
@@ -288,6 +326,52 @@ function readEnvValue(name) {
   }
   const trimmed = value.trim();
   return trimmed;
+}
+
+function loadEnvFile(filePath) {
+  const resolvedPath = path.resolve(filePath);
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Env file not found: ${resolvedPath}`);
+  }
+
+  const content = fs.readFileSync(resolvedPath, 'utf8');
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    const equalIndex = line.indexOf('=');
+    if (equalIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, equalIndex).trim();
+    let value = line.slice(equalIndex + 1).trim();
+
+    if (!key) {
+      continue;
+    }
+
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      const quote = value[0];
+      value = value.slice(1, -1);
+      if (quote === '"') {
+        value = value
+          .replaceAll('\\n', '\n')
+          .replaceAll('\\r', '\r')
+          .replaceAll('\\t', '\t')
+          .replaceAll('\\"', '"')
+          .replaceAll('\\\\', '\\');
+      } else {
+        value = value.replaceAll("\\'", "'");
+      }
+    }
+
+    if (!(key in process.env)) {
+      process.env[key] = value;
+    }
+  }
 }
 
 function hasCompleteManualPrintContext(envConfig) {
@@ -513,6 +597,24 @@ function listActiveEnvOverrideFields(envConfig) {
   if (envConfig.printerGuid) fields.push('MEMOBIRD_PRINTER_GUID');
   if (envConfig.printerName) fields.push('MEMOBIRD_PRINTER_NAME');
   return fields;
+}
+
+function renderEnvFile({ loginInfo, fromUserName, targetNote, targetPrinter, source }) {
+  const lines = [
+    `# Generated locally from ${source}`,
+    '# Keep this file private. Do not commit it.',
+    `MEMOBIRD_LOGININFO=${quoteEnvValue(loginInfo)}`,
+    `MEMOBIRD_FROM_USER_NAME=${quoteEnvValue(fromUserName)}`,
+    `MEMOBIRD_TO_USER_ID=${quoteEnvValue(targetNote.userId)}`,
+    `MEMOBIRD_TO_USER_NAME=${quoteEnvValue(targetNote.userName)}`,
+    `MEMOBIRD_PRINTER_GUID=${quoteEnvValue(targetPrinter.smartGuid)}`,
+    `MEMOBIRD_PRINTER_NAME=${quoteEnvValue(targetPrinter.smartName)}`,
+  ];
+  return lines.join('\n');
+}
+
+function quoteEnvValue(value) {
+  return JSON.stringify(String(value || ''));
 }
 
 function readEdgeCookie({ profileName, domain, name }) {

@@ -13,7 +13,7 @@ The core rule is simple: do not hardcode a packet capture and do not commit live
 Support two audiences:
 
 - For agents: prefer the dynamic workflow that recomputes fresh values from the current session.
-- For humans: prefer the environment-variable workflow documented in `README.md` and `env.example.sh`.
+- For humans: prefer the environment-variable workflow documented in `README.en.md`, `README.zh-CN.md`, and `.env.example`.
 
 ## Goals
 
@@ -63,7 +63,17 @@ Choose explicitly:
 - For agent-driven reverse engineering or local automation, use the dynamic path.
 - For human-facing setup docs, CI usage, or non-macOS usage, use the environment-variable path.
 
-### 1. Start With Source, Not Blind Replay
+### 1. Prefer Dynamic Resolution For Agents
+
+Prefer the agent path when the environment supports it:
+
+- inspect frontend source
+- confirm behavior with browser capture
+- resolve fresh wrapped IDs dynamically
+- export a local `.env` block only when needed
+
+<details>
+<summary>Packet Capture / Frontend Inspection Details</summary>
 
 Open `references/reverse-engineering.md` and use the source-first method:
 
@@ -71,10 +81,6 @@ Open `references/reverse-engineering.md` and use the source-first method:
 - Open `Scripts/Ajax/mailListAjax.js`
 - Search for `PrintPaper`
 - Map each request field to the DOM or prior API response that produced it
-
-This avoids cargo-culting a stale packet capture.
-
-### 2. Confirm With Network Evidence
 
 Use the local browser only to confirm behavior, not to define the final implementation:
 
@@ -85,6 +91,8 @@ Use the local browser only to confirm behavior, not to define the final implemen
 - Inspect `DBInterface.ashx` requests
 
 Treat the browser capture as evidence for the flow, not as a source of permanent constants.
+
+</details>
 
 ### 3. Resolve Fresh Values Programmatically
 
@@ -103,10 +111,29 @@ This is the stable path. Do not persist raw `toUserId` or `guidList` values in t
 
 When the output is meant for a human operator instead of another agent:
 
-- Point them to `env.example.sh`
+- Point them to `.env.example`
 - Explain how to copy `MEMOBIRD_LOGININFO` from Edge DevTools cookies
 - Explain how to copy `toUserId`, `toUserName`, and `guidList` from a captured `PrintPaper` request or from `--list --show-ids`
+- Explain how to use `--env-file .env.local`
 - Explain that environment variables override live note and printer selection
+
+<details>
+<summary>Human Env Setup Details</summary>
+
+For human-facing docs, prefer a cross-platform `.env` file workflow:
+
+- Copy `.env.example` to `.env.local`
+- Fill in the real values manually
+- Run `node scripts/memobird-print.mjs --env-file .env.local --dry-run --text "test"`
+- Run the real print command only after the preview looks correct
+
+If the environment supports automatic session reuse, the agent can generate a local env block with:
+
+`node scripts/memobird-print.mjs --list --show-ids --emit-env`
+
+That output should stay local and should not be committed.
+
+</details>
 
 Do not tell humans they must decrypt local browser cookies if a manual env path is sufficient.
 
@@ -158,7 +185,7 @@ When preparing a public repository:
 The main helper is:
 
 - `scripts/memobird-print.mjs`
-- `env.example.sh`
+- `.env.example`
 
 Use it to:
 
@@ -166,6 +193,8 @@ Use it to:
 - preview a request without printing
 - print text through the current Edge login session
 - print text through manually supplied environment variables
+- load variables from `--env-file`
+- emit a `.env` block with `--emit-env`
 
 If the task needs deeper protocol analysis, open:
 
