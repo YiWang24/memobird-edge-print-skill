@@ -11,7 +11,7 @@
 这是一个公开的 Codex skill 仓库，用来做两件事：
 
 1. 总结 Memobird 网页版打印纸条的抓包和逆向方法。
-2. 提供一个可直接运行的脚本，通过复用本机 Microsoft Edge 已登录的会话，自动获取最新的 `userId` / `smartGuid` 包装值并发送 `PrintPaper` 请求。
+2. 提供一个可直接运行的脚本，既支持复用本机 Microsoft Edge 已登录的会话自动取值，也支持人类手动准备环境变量并发送 `PrintPaper` 请求。
 
 这个仓库的重点不是“保存一次抓包结果并回放”，而是“解释请求链路，并在运行时重新取到当前有效的参数”。
 
@@ -38,7 +38,9 @@ Memobird 网页接口里的关键字段，例如：
 - `references/reverse-engineering.md`
   详细记录抓包方法、接口链路、字段来源，以及为什么不能直接写死一次抓包结果。
 - `scripts/memobird-print.mjs`
-  可执行脚本。支持列出目标、预览请求、直接打印、按中英文宽度自动换行。
+  可执行脚本。支持列出目标、预览请求、直接打印、按中英文宽度自动换行，以及通过环境变量覆盖关键请求参数。
+- `env.example.sh`
+  给人类使用的环境变量模板。复制后填入自己的值即可。
 
 ### 工作原理
 
@@ -53,6 +55,39 @@ Memobird 网页接口里的关键字段，例如：
 
 也就是说，真正用到的参数不是保存在仓库里的，而是每次运行时重新从当前会话计算得到。
 
+### 两种使用方式
+
+这个仓库明确支持两条路径：
+
+#### 1. 给 agent 的动态路径
+
+适合：
+
+- agent 自己去读 `SKILL.md`
+- agent 自己抓包、读前端源码、推断参数来源
+- agent 在本机直接复用 Edge 登录态自动取值
+
+这一条路径的重点是：
+
+- 不写死抓包值
+- 动态请求 `GetLanderInfo` / `LoginWeb`
+- 从当前会话拿到最新的 `toUserId` / `guidList`
+
+#### 2. 给人类的手动环境变量路径
+
+适合：
+
+- 不想让脚本自己去读本机 Edge cookie
+- 想自己从 DevTools 里复制变量
+- 想把需要的变量放到 `env.local.sh` 或 CI 环境变量里
+- 想在非 macOS 环境下运行脚本
+
+这一条路径的重点是：
+
+- 人自己拿到 `logininfo`
+- 人自己拿到 `toUserId` / `toUserName` / `guidList`
+- 通过环境变量传给脚本
+
 ### 适用场景
 
 适合以下任务：
@@ -65,6 +100,8 @@ Memobird 网页接口里的关键字段，例如：
 
 ### 环境要求
 
+#### 自动模式
+
 - macOS
 - Microsoft Edge
 - 已在 Edge 中登录 `https://w.memobird.cn/cn/w/mailList.html`
@@ -73,7 +110,22 @@ Memobird 网页接口里的关键字段，例如：
   - `sqlite3`
   - `security`
 
-当前版本只支持 macOS，因为脚本依赖本地 Edge cookie 存储格式和 macOS keychain 解密方式。
+#### 环境变量模式
+
+- 任意支持 `node` 的环境
+- 如果只是 `--dry-run` 预览，可以只提供完整的打印字段
+- 如果要真实发送打印请求，需要有效的 `MEMOBIRD_LOGININFO`
+- 如果要完全手动控制请求字段，还需要：
+  - `MEMOBIRD_TO_USER_ID`
+  - `MEMOBIRD_TO_USER_NAME`
+  - `MEMOBIRD_PRINTER_GUID`
+  - `MEMOBIRD_FROM_USER_NAME`
+
+也就是说：
+
+- 自动读取 Edge 登录态这件事目前只支持 macOS
+- 但如果你自己准备好环境变量，脚本不强依赖 macOS
+- 完整环境变量 + `--dry-run` 可以在不带登录态的情况下做本地预览
 
 ### 安装方式
 
@@ -95,6 +147,20 @@ ln -s /absolute/path/to/memobird-edge-print-skill /your/skills/path/memobird-edg
 ```
 
 这个仓库顶层就有 `SKILL.md`，所以仓库根目录本身就是 skill 根目录。
+
+#### 3. 作为人类手动 env 工具使用
+
+复制模板：
+
+```bash
+cp env.example.sh env.local.sh
+```
+
+填写自己的变量后加载：
+
+```bash
+source env.local.sh
+```
 
 ### 抓包 / 逆向方法摘要
 
@@ -149,6 +215,113 @@ ln -s /absolute/path/to/memobird-edge-print-skill /your/skills/path/memobird-edg
 
 抓包出来的 `toUserId` / `guidList` 是运行时包装值，不应该当成永久密钥保存在代码里。稳定做法是每次运行时重新向页面已有接口取最新值。
 
+### 给人类读的手动环境变量方式
+
+这一节是给“自己操作、自己填变量”的用户看的，不是给 agent 的逆向说明。
+
+#### 需要哪些变量
+
+最常见的是这几个：
+
+- `MEMOBIRD_LOGININFO`
+  用于带上登录态
+- `MEMOBIRD_FROM_USER_NAME`
+  打印请求里的 `fromUserName`
+- `MEMOBIRD_TO_USER_ID`
+  打印请求里的 `toUserId`
+- `MEMOBIRD_TO_USER_NAME`
+  打印请求里的 `toUserName`
+- `MEMOBIRD_PRINTER_GUID`
+  打印请求里的 `guidList`
+- `MEMOBIRD_PRINTER_NAME`
+  可选，只用于本地输出显示
+
+#### 怎么获取 `MEMOBIRD_LOGININFO`
+
+在 Edge 里：
+
+1. 打开 `https://w.memobird.cn/cn/w/mailList.html`
+2. 打开 DevTools
+3. 进入 `Application`
+4. 找到 `Cookies`
+5. 选择 `https://w.memobird.cn`
+6. 找到 `logininfo`
+7. 复制它的值
+
+这个值不要提交到仓库，也不要发到公开 issue 里。
+
+#### 怎么获取 `MEMOBIRD_TO_USER_ID` / `MEMOBIRD_TO_USER_NAME` / `MEMOBIRD_PRINTER_GUID`
+
+有两种方式：
+
+##### 方式 A：直接从浏览器抓包里拿
+
+1. 在 Memobird 网页里发一条测试纸条
+2. 在 `Network` 面板里找到 `PrintPaper`
+3. 看请求表单里的：
+   - `toUserId`
+   - `toUserName`
+   - `guidList`
+
+##### 方式 B：先让脚本列出来
+
+如果你在 macOS 上，并且脚本能读取当前 Edge 登录态，可以执行：
+
+```bash
+node scripts/memobird-print.mjs --list --show-ids
+```
+
+这样可以拿到当前 note 和 printer 的真实包装值。注意：这个输出只应该留在本地终端里，不要复制进公开文档。
+
+#### 怎么填环境变量
+
+先复制模板：
+
+```bash
+cp env.example.sh env.local.sh
+```
+
+然后编辑成自己的值，例如：
+
+```bash
+export MEMOBIRD_LOGININFO='your-logininfo-cookie'
+export MEMOBIRD_FROM_USER_NAME='Your Name'
+export MEMOBIRD_TO_USER_ID='your-wrapped-toUserId'
+export MEMOBIRD_TO_USER_NAME='我'
+export MEMOBIRD_PRINTER_GUID='your-wrapped-guidList'
+export MEMOBIRD_PRINTER_NAME='My Memobird'
+```
+
+加载变量：
+
+```bash
+source env.local.sh
+```
+
+#### 手动 env 方式的推荐执行顺序
+
+```bash
+source env.local.sh
+node scripts/memobird-print.mjs --dry-run --text $'测试标题\n第二行'
+node scripts/memobird-print.mjs --text $'正式打印内容'
+```
+
+如果你只是想检查拼出来的请求体，不想真的发出去，那么 `env.local.sh` 里可以先不放 `MEMOBIRD_LOGININFO`，只跑 `--dry-run`。
+
+#### 环境变量和自动模式的优先级
+
+脚本的优先级是：
+
+1. 如果设置了 `MEMOBIRD_LOGININFO`，优先使用它，不再从本机 Edge 读取 cookie
+2. 如果设置了 `MEMOBIRD_TO_USER_ID`，优先直接用它，不再依赖当前 note 选择
+3. 如果设置了 `MEMOBIRD_PRINTER_GUID`，优先直接用它，不再依赖当前设备选择
+
+所以这套 env 方式适合：
+
+- 手动控制具体请求参数
+- 在非 macOS 环境运行
+- 把参数交给 CI 或别的自动化系统
+
 ### 脚本使用
 
 #### 查看当前 note 目标和打印机
@@ -158,6 +331,13 @@ node scripts/memobird-print.mjs --list
 ```
 
 默认会把包装后的 ID 打码。
+
+#### 用环境变量列出当前会话信息
+
+```bash
+MEMOBIRD_LOGININFO='your-logininfo-cookie' \
+node scripts/memobird-print.mjs --list
+```
 
 #### 预览请求但不实际打印
 
@@ -206,6 +386,13 @@ node scripts/memobird-print.mjs --list --show-ids
 
 只有在明确需要调试时才建议使用 `--show-ids`。
 
+#### 纯环境变量方式直接打印
+
+```bash
+source env.local.sh
+node scripts/memobird-print.mjs --text $'通过环境变量直接打印'
+```
+
 ### 主要参数
 
 - `--list`
@@ -228,6 +415,23 @@ node scripts/memobird-print.mjs --list --show-ids
   显示真实包装 ID，不再打码
 - `--debug`
   打印接口原始返回
+
+### 环境变量
+
+- `MEMOBIRD_LOGININFO`
+  直接提供登录 cookie，跳过本机 Edge 读取
+- `MEMOBIRD_FROM_USER_NAME`
+  覆盖 `fromUserName`
+- `MEMOBIRD_TO_USER_ID`
+  覆盖 `toUserId`
+- `MEMOBIRD_TO_USER_NAME`
+  覆盖 `toUserName`
+- `MEMOBIRD_PRINTER_GUID`
+  覆盖 `guidList`
+- `MEMOBIRD_GUID_LIST`
+  `MEMOBIRD_PRINTER_GUID` 的别名
+- `MEMOBIRD_PRINTER_NAME`
+  可选，仅用于本地输出显示
 
 ### 自动排版说明
 
@@ -261,9 +465,9 @@ node scripts/memobird-print.mjs --list --show-ids
 
 ### 限制
 
-- 目前仅支持 macOS
-- 目前仅支持 Microsoft Edge
-- 前提是用户已经在 Edge 中登录 Memobird Web
+- 自动读取 Edge 登录态目前仅支持 macOS
+- 自动读取浏览器 cookie 的路径目前仅针对 Microsoft Edge
+- 如果使用手动环境变量方式，可以不依赖 macOS，但仍然需要有效的 `MEMOBIRD_LOGININFO`
 - 这个脚本适合文本纸条，不是完整的网页编辑器克隆
 
 ### 排错建议
@@ -307,7 +511,7 @@ node scripts/memobird-print.mjs --list --show-ids
 This repository is a public Codex skill for two related tasks:
 
 1. Document the reverse engineering process behind Memobird Web printing.
-2. Provide a working helper script that reuses the local Microsoft Edge login session to fetch fresh wrapped IDs and send `PrintPaper`.
+2. Provide a working helper script that supports both live Edge session reuse and human-managed environment variables for sending `PrintPaper`.
 
 The main idea is not “capture once and replay forever.” The correct strategy is to understand the request flow, then resolve fresh runtime values from the current session whenever the script runs.
 
@@ -334,7 +538,9 @@ This repository therefore focuses on:
 - `references/reverse-engineering.md`
   Detailed notes about the reverse engineering workflow, request chain, field origins, and privacy rules.
 - `scripts/memobird-print.mjs`
-  Executable helper script for listing targets, previewing requests, and printing text notes.
+  Executable helper script for listing targets, previewing requests, printing text notes, and overriding request fields through environment variables.
+- `env.example.sh`
+  A shell template for humans who want to manage the required variables manually.
 
 ### How It Works
 
@@ -349,6 +555,32 @@ The script follows this runtime flow:
 
 In other words, the repository does not store live wrapped IDs. It recomputes them at runtime from the local logged-in session.
 
+### Two Usage Paths
+
+This repository intentionally supports two different paths:
+
+#### 1. Agent-oriented dynamic path
+
+Use this path when an agent can:
+
+- read `SKILL.md`
+- inspect frontend source
+- use browser capture as evidence
+- reuse the local Edge session and resolve fresh runtime values automatically
+
+This is the preferred path for reverse engineering and local automation.
+
+#### 2. Human-oriented environment variable path
+
+Use this path when a human wants to:
+
+- copy values manually from DevTools
+- prepare a local `env.local.sh`
+- pass wrapped IDs explicitly
+- run the script outside the original macOS + Edge environment
+
+This is the preferred path for README-driven usage and manual control.
+
 ### Use Cases
 
 Use this repository when the task is something like:
@@ -361,6 +593,8 @@ Use this repository when the task is something like:
 
 ### Requirements
 
+#### Automatic session mode
+
 - macOS
 - Microsoft Edge
 - Logged into `https://w.memobird.cn/cn/w/mailList.html` in Edge
@@ -369,7 +603,22 @@ Use this repository when the task is something like:
   - `sqlite3`
   - `security`
 
-The current implementation is macOS-only because it depends on the local Edge cookie layout and macOS keychain decryption.
+#### Environment variable mode
+
+- any environment with `node`
+- for `--dry-run` previews only, a complete manual print context is enough
+- for real printing, a valid `MEMOBIRD_LOGININFO` is required
+- and, for full manual control:
+  - `MEMOBIRD_FROM_USER_NAME`
+  - `MEMOBIRD_TO_USER_ID`
+  - `MEMOBIRD_TO_USER_NAME`
+  - `MEMOBIRD_PRINTER_GUID`
+
+So the actual limitation is:
+
+- automatic Edge cookie reuse is macOS-specific
+- manual environment-variable mode is not macOS-specific as long as valid values are provided
+- a complete manual env setup can be used for local dry-run previews even without a live login cookie
 
 ### Installation
 
@@ -391,6 +640,20 @@ ln -s /absolute/path/to/memobird-edge-print-skill /your/skills/path/memobird-edg
 ```
 
 The repository root is the skill root because `SKILL.md` is at the top level.
+
+#### 3. Use it as a manual env-driven tool
+
+Copy the template:
+
+```bash
+cp env.example.sh env.local.sh
+```
+
+Then load your variables:
+
+```bash
+source env.local.sh
+```
 
 ### Reverse Engineering Summary
 
@@ -445,6 +708,103 @@ The main `PrintPaper` fields come from:
 
 Captured `toUserId` and `guidList` values are runtime wrappers, not permanent secrets to commit into source code. The stable strategy is to fetch fresh values on each run.
 
+### Human-Oriented Environment Variable Workflow
+
+This section is written for humans who want to collect variables themselves and inject them manually.
+
+#### Required variables
+
+The common set is:
+
+- `MEMOBIRD_LOGININFO`
+- `MEMOBIRD_FROM_USER_NAME`
+- `MEMOBIRD_TO_USER_ID`
+- `MEMOBIRD_TO_USER_NAME`
+- `MEMOBIRD_PRINTER_GUID`
+- `MEMOBIRD_PRINTER_NAME` optional, for display only
+
+#### How to get `MEMOBIRD_LOGININFO`
+
+In Edge:
+
+1. Open `https://w.memobird.cn/cn/w/mailList.html`
+2. Open DevTools
+3. Go to `Application`
+4. Open `Cookies`
+5. Select `https://w.memobird.cn`
+6. Find `logininfo`
+7. Copy its value
+
+Do not commit or publish this cookie.
+
+#### How to get `MEMOBIRD_TO_USER_ID`, `MEMOBIRD_TO_USER_NAME`, and `MEMOBIRD_PRINTER_GUID`
+
+Two common options:
+
+##### Option A: copy them from a captured request
+
+1. Send a test note in Memobird Web
+2. Find the `PrintPaper` request in DevTools Network
+3. Copy:
+   - `toUserId`
+   - `toUserName`
+   - `guidList`
+
+##### Option B: let the script print them locally
+
+On macOS, if the script can already read the current Edge session:
+
+```bash
+node scripts/memobird-print.mjs --list --show-ids
+```
+
+That output should stay local. Do not paste it into public documentation.
+
+#### How to set the variables
+
+Copy the template:
+
+```bash
+cp env.example.sh env.local.sh
+```
+
+Then fill it with your own values, for example:
+
+```bash
+export MEMOBIRD_LOGININFO='your-logininfo-cookie'
+export MEMOBIRD_FROM_USER_NAME='Your Name'
+export MEMOBIRD_TO_USER_ID='your-wrapped-toUserId'
+export MEMOBIRD_TO_USER_NAME='Self'
+export MEMOBIRD_PRINTER_GUID='your-wrapped-guidList'
+export MEMOBIRD_PRINTER_NAME='My Memobird'
+```
+
+Load it:
+
+```bash
+source env.local.sh
+```
+
+#### Recommended execution order for manual env mode
+
+```bash
+source env.local.sh
+node scripts/memobird-print.mjs --dry-run --text $'Title\nSecond line'
+node scripts/memobird-print.mjs --text $'Final printed content'
+```
+
+If the goal is only to inspect the generated request body locally, `MEMOBIRD_LOGININFO` can be omitted for `--dry-run`.
+
+#### Precedence rules
+
+The script resolves values in this order:
+
+1. `MEMOBIRD_LOGININFO` overrides local Edge cookie lookup
+2. `MEMOBIRD_TO_USER_ID` overrides note selection
+3. `MEMOBIRD_PRINTER_GUID` overrides printer selection
+
+That makes env mode a good fit for CI, remote shells, or explicit manual control.
+
 ### Script Usage
 
 #### List available note targets and printers
@@ -454,6 +814,13 @@ node scripts/memobird-print.mjs --list
 ```
 
 Wrapped IDs are redacted by default.
+
+#### List current session information through environment variables
+
+```bash
+MEMOBIRD_LOGININFO='your-logininfo-cookie' \
+node scripts/memobird-print.mjs --list
+```
 
 #### Preview a request without printing
 
@@ -502,6 +869,13 @@ node scripts/memobird-print.mjs --list --show-ids
 
 Use `--show-ids` only when raw debugging output is explicitly needed.
 
+#### Print directly through environment variables
+
+```bash
+source env.local.sh
+node scripts/memobird-print.mjs --text $'Printed through env variables'
+```
+
 ### Main Options
 
 - `--list`
@@ -524,6 +898,23 @@ Use `--show-ids` only when raw debugging output is explicitly needed.
   reveal raw wrapped IDs instead of redacting them
 - `--debug`
   print the raw API response
+
+### Environment Variables
+
+- `MEMOBIRD_LOGININFO`
+  provide the login cookie directly and skip local Edge cookie lookup
+- `MEMOBIRD_FROM_USER_NAME`
+  override `fromUserName`
+- `MEMOBIRD_TO_USER_ID`
+  override `toUserId`
+- `MEMOBIRD_TO_USER_NAME`
+  override `toUserName`
+- `MEMOBIRD_PRINTER_GUID`
+  override `guidList`
+- `MEMOBIRD_GUID_LIST`
+  alias for `MEMOBIRD_PRINTER_GUID`
+- `MEMOBIRD_PRINTER_NAME`
+  optional display label for the overridden printer
 
 ### Layout Behavior
 
@@ -557,9 +948,9 @@ If you republish or adapt this repository, run a final search for:
 
 ### Limitations
 
-- macOS only
-- Microsoft Edge only
-- requires the user to already be logged into Memobird Web
+- automatic Edge session reuse is currently macOS-only
+- automatic browser cookie lookup is currently implemented for Microsoft Edge
+- manual env mode does not require macOS, but still requires a valid `MEMOBIRD_LOGININFO`
 - optimized for text note printing, not for full WYSIWYG editor parity
 
 ### Troubleshooting

@@ -13,31 +13,49 @@ const DEFAULT_WIDTH = 32;
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const envConfig = readEnvConfig();
 
   if (options.help) {
     printHelp();
     return;
   }
 
-  if (process.platform !== 'darwin') {
-    throw new Error('This script currently supports macOS only because it reads the local Edge cookie store.');
+  const manualContextComplete = hasCompleteManualPrintContext(envConfig);
+  const needsLiveResolution = options.list || !manualContextComplete;
+  const needsSession = needsLiveResolution || !options.dryRun;
+
+  const session = needsSession
+    ? createMemobirdSession({
+      profileName: options.profile,
+      loginInfo: envConfig.loginInfo,
+    })
+    : null;
+
+  let lander = {};
+  let login = {};
+  let notes = [];
+  let smartCores = [];
+
+  if (needsLiveResolution) {
+    lander = await session.getJson('GetLanderInfo');
+    assertApiSuccess(lander, 'GetLanderInfo');
+
+    login = await session.getJson('LoginWeb');
+    assertApiSuccess(login, 'LoginWeb');
+
+    notes = Array.isArray(login.notes) ? login.notes : [];
+    smartCores = Array.isArray(login.smartCores) && login.smartCores.length > 0
+      ? login.smartCores
+      : await loadFallbackSmartCores(session);
   }
 
-  const session = createMemobirdSession(options.profile);
-  const lander = await session.getJson('GetLanderInfo');
-  assertApiSuccess(lander, 'GetLanderInfo');
-
-  const login = await session.getJson('LoginWeb');
-  assertApiSuccess(login, 'LoginWeb');
-
-  const notes = Array.isArray(login.notes) ? login.notes : [];
-  const smartCores = Array.isArray(login.smartCores) && login.smartCores.length > 0
-    ? login.smartCores
-    : await loadFallbackSmartCores(session);
-
   if (options.list) {
-    printSessionSummary(lander, notes, smartCores, options.showIds);
-    return;
+    printSessionSummary(lander, notes, smartCores, {
+      showIds: options.showIds,
+      sessionSource: session.source,
+      envConfig,
+    });
+      return;
   }
 
   const rawText = readInputText(options);
@@ -45,8 +63,19 @@ async function main() {
     throw new Error('No print text provided. Use --text, --file, positional text, or pipe stdin.');
   }
 
-  const targetNote = selectTargetNote(notes, login, lander, options.recipient);
-  const targetPrinter = selectTargetPrinter(smartCores, options.device);
+  const fromUserName = envConfig.fromUserName || lander.userName || login.userName || '';
+  const targetNote = resolveTargetNote({
+    envConfig,
+    notes,
+    login,
+    lander,
+    requestedRecipient: options.recipient,
+  });
+  const targetPrinter = resolveTargetPrinter({
+    envConfig,
+    smartCores,
+    requestedDevice: options.device,
+  });
   const html = formatPlainTextForMemobird(rawText, {
     width: options.width,
     wrap: options.wrap,
@@ -54,7 +83,7 @@ async function main() {
 
   const payload = new URLSearchParams({
     DataType: 'PrintPaper',
-    fromUserName: lander.userName || login.userName || '',
+    fromUserName,
     toUserId: targetNote.userId,
     toUserName: targetNote.userName,
     guidList: targetPrinter.smartGuid,
@@ -64,7 +93,9 @@ async function main() {
 
   if (options.dryRun) {
     const preview = {
-      fromUserName: lander.userName || login.userName || '',
+      sessionSource: session?.source || 'manual-env:no-session',
+      manualOverrideFields: listActiveEnvOverrideFields(envConfig),
+      fromUserName,
       toUserName: targetNote.userName,
       toUserId: maybeRedact(targetNote.userId, options.showIds),
       smartName: targetPrinter.smartName,
@@ -78,10 +109,14 @@ async function main() {
     return;
   }
 
+  if (!session) {
+    throw new Error('Printing requires a valid session. Set MEMOBIRD_LOGININFO or use logged-in Edge on macOS first.');
+  }
+
   const result = await session.postForm(payload);
   assertApiSuccess(result, 'PrintPaper');
 
-  console.log(`Printed to "${targetPrinter.smartName}" as ${lander.userName} -> ${targetNote.userName}`);
+  console.log(`Printed to "${targetPrinter.smartName}" as ${fromUserName} -> ${targetNote.userName}`);
   console.log(`Server message: ${result.msg || 'OK'}`);
   if (options.debug) {
     console.log(JSON.stringify(result, null, 2));
@@ -170,6 +205,7 @@ Usage:
   node scripts/memobird-print.mjs --list
   node scripts/memobird-print.mjs --dry-run --text "hello"
   node scripts/memobird-print.mjs --device "My Memobird" --text "line one\\nline two"
+  MEMOBIRD_LOGININFO='...' node scripts/memobird-print.mjs --list
   echo "print from stdin" | node scripts/memobird-print.mjs
 
 Options:
@@ -185,6 +221,15 @@ Options:
       --show-ids    Reveal raw wrapped IDs instead of redacted output
       --debug       Print raw API response after PrintPaper
   -h, --help        Show this help
+
+Environment Variables:
+  MEMOBIRD_LOGININFO       Use this cookie value instead of reading Edge locally
+  MEMOBIRD_FROM_USER_NAME  Override fromUserName in PrintPaper
+  MEMOBIRD_TO_USER_ID      Override toUserId in PrintPaper
+  MEMOBIRD_TO_USER_NAME    Override toUserName in PrintPaper
+  MEMOBIRD_PRINTER_GUID    Override guidList in PrintPaper
+  MEMOBIRD_GUID_LIST       Alias for MEMOBIRD_PRINTER_GUID
+  MEMOBIRD_PRINTER_NAME    Optional display name for the overridden printer
 `);
 }
 
@@ -225,20 +270,47 @@ function readInputText(options) {
   return '';
 }
 
-function createMemobirdSession(profileName) {
-  const loginInfo = readEdgeCookie({
-    profileName,
-    domain: 'w.memobird.cn',
-    name: 'logininfo',
-  });
+function readEnvConfig() {
+  return {
+    loginInfo: readEnvValue('MEMOBIRD_LOGININFO'),
+    fromUserName: readEnvValue('MEMOBIRD_FROM_USER_NAME'),
+    toUserId: readEnvValue('MEMOBIRD_TO_USER_ID'),
+    toUserName: readEnvValue('MEMOBIRD_TO_USER_NAME'),
+    printerGuid: readEnvValue('MEMOBIRD_PRINTER_GUID') || readEnvValue('MEMOBIRD_GUID_LIST'),
+    printerName: readEnvValue('MEMOBIRD_PRINTER_NAME'),
+  };
+}
 
-  if (!loginInfo) {
-    throw new Error('Could not read the Edge logininfo cookie. Log in at https://w.memobird.cn/cn/w/mailList.html first.');
+function readEnvValue(name) {
+  const value = process.env[name];
+  if (typeof value !== 'string') {
+    return '';
+  }
+  const trimmed = value.trim();
+  return trimmed;
+}
+
+function hasCompleteManualPrintContext(envConfig) {
+  return Boolean(
+    envConfig.fromUserName &&
+    envConfig.toUserId &&
+    envConfig.toUserName &&
+    envConfig.printerGuid,
+  );
+}
+
+function createMemobirdSession({ profileName, loginInfo }) {
+  const resolvedLoginInfo = loginInfo || readEdgeLoginInfoFromProfile(profileName);
+
+  if (!resolvedLoginInfo) {
+    throw new Error(
+      'Could not resolve logininfo. Either set MEMOBIRD_LOGININFO or log in at https://w.memobird.cn/cn/w/mailList.html in Microsoft Edge on macOS first.',
+    );
   }
 
   async function request(url, init = {}) {
     const headers = new Headers(init.headers || {});
-    headers.set('cookie', `logininfo=${loginInfo}`);
+    headers.set('cookie', `logininfo=${resolvedLoginInfo}`);
     headers.set('referer', REFERER);
     headers.set('x-requested-with', 'XMLHttpRequest');
 
@@ -256,6 +328,7 @@ function createMemobirdSession(profileName) {
   }
 
   return {
+    source: loginInfo ? 'env:MEMOBIRD_LOGININFO' : `edge:${profileName}`,
     async getJson(dataType, extra = {}) {
       const params = new URLSearchParams({
         DataType: dataType,
@@ -278,10 +351,34 @@ function createMemobirdSession(profileName) {
   };
 }
 
+function readEdgeLoginInfoFromProfile(profileName) {
+  if (process.platform !== 'darwin') {
+    return '';
+  }
+
+  return readEdgeCookie({
+    profileName,
+    domain: 'w.memobird.cn',
+    name: 'logininfo',
+  });
+}
+
 async function loadFallbackSmartCores(session) {
   const fallback = await session.getJson('GetSmartCoreByUserID', { UserId: '' });
   assertApiSuccess(fallback, 'GetSmartCoreByUserID');
   return Array.isArray(fallback.smartCores) ? fallback.smartCores : [];
+}
+
+function resolveTargetNote({ envConfig, notes, login, lander, requestedRecipient }) {
+  if (envConfig.toUserId) {
+    return {
+      userId: envConfig.toUserId,
+      userName: envConfig.toUserName || requestedRecipient || inferUserNameFromNotes(notes, envConfig.toUserId) || 'Manual recipient',
+      userGgNumber: '',
+    };
+  }
+
+  return selectTargetNote(notes, login, lander, requestedRecipient);
 }
 
 function selectTargetNote(notes, login, lander, requestedRecipient) {
@@ -327,6 +424,28 @@ function selectTargetNote(notes, login, lander, requestedRecipient) {
   throw new Error('No available note target found.');
 }
 
+function inferUserNameFromNotes(notes, userId) {
+  const note = Array.isArray(notes) ? notes.find((item) => item.userId === userId) : null;
+  return note?.userName || '';
+}
+
+function resolveTargetPrinter({ envConfig, smartCores, requestedDevice }) {
+  if (envConfig.printerGuid) {
+    return {
+      smartGuid: envConfig.printerGuid,
+      smartName: envConfig.printerName || requestedDevice || inferPrinterNameFromSmartCores(smartCores, envConfig.printerGuid) || 'Manual printer',
+      smartType: '',
+    };
+  }
+
+  return selectTargetPrinter(smartCores, requestedDevice);
+}
+
+function inferPrinterNameFromSmartCores(smartCores, smartGuid) {
+  const printer = Array.isArray(smartCores) ? smartCores.find((item) => item.smartGuid === smartGuid) : null;
+  return printer?.smartName || '';
+}
+
 function selectTargetPrinter(smartCores, requestedDevice) {
   if (!Array.isArray(smartCores) || smartCores.length === 0) {
     throw new Error('No bound Memobird printer found for this account.');
@@ -349,8 +468,9 @@ function selectTargetPrinter(smartCores, requestedDevice) {
   return printer;
 }
 
-function printSessionSummary(lander, notes, smartCores, showIds) {
+function printSessionSummary(lander, notes, smartCores, { showIds, sessionSource, envConfig }) {
   const lines = [
+    `Session source: ${sessionSource}`,
     `Logged in as: ${lander.userName} (${lander.userGgNumber})`,
     '',
     'Notes:',
@@ -377,7 +497,22 @@ function printSessionSummary(lander, notes, smartCores, showIds) {
     }
   }
 
+  const overrideFields = listActiveEnvOverrideFields(envConfig);
+  if (overrideFields.length > 0) {
+    lines.push('', `Manual env overrides active: ${overrideFields.join(', ')}`);
+  }
+
   console.log(lines.join('\n'));
+}
+
+function listActiveEnvOverrideFields(envConfig) {
+  const fields = [];
+  if (envConfig.fromUserName) fields.push('MEMOBIRD_FROM_USER_NAME');
+  if (envConfig.toUserId) fields.push('MEMOBIRD_TO_USER_ID');
+  if (envConfig.toUserName) fields.push('MEMOBIRD_TO_USER_NAME');
+  if (envConfig.printerGuid) fields.push('MEMOBIRD_PRINTER_GUID');
+  if (envConfig.printerName) fields.push('MEMOBIRD_PRINTER_NAME');
+  return fields;
 }
 
 function readEdgeCookie({ profileName, domain, name }) {

@@ -10,6 +10,11 @@ Use this skill to reverse engineer Memobird Web printing safely and to send pape
 
 The core rule is simple: do not hardcode a packet capture and do not commit live identifiers. Memobird wraps `userId` and `smartGuid` values in short-lived encoded strings, so a one-off capture is useful for learning the protocol but is not a stable implementation strategy.
 
+Support two audiences:
+
+- For agents: prefer the dynamic workflow that recomputes fresh values from the current session.
+- For humans: prefer the environment-variable workflow documented in `README.md` and `env.example.sh`.
+
 ## Goals
 
 Accomplish four things:
@@ -18,6 +23,7 @@ Accomplish four things:
 2. Explain where each `PrintPaper` field comes from.
 3. Recompute fresh values from the current session instead of replaying stale captured data.
 4. Keep cookies, wrapped identifiers, personal names, and device names out of published artifacts unless the user explicitly asks for them.
+5. Distinguish agent-facing reverse engineering guidance from human-facing environment variable setup guidance.
 
 ## When To Use
 
@@ -34,16 +40,28 @@ Use this skill when the task involves any of the following:
 
 Before running the workflow, verify:
 
-- macOS is the current OS
-- Microsoft Edge is installed
-- The user is already logged into `https://w.memobird.cn/cn/w/mailList.html` in Edge
-- `node`, `sqlite3`, and the macOS `security` CLI are available
+- If using the dynamic browser-session path:
+  - macOS is the current OS
+  - Microsoft Edge is installed
+  - the user is already logged into `https://w.memobird.cn/cn/w/mailList.html` in Edge
+  - `node`, `sqlite3`, and the macOS `security` CLI are available
+- If using the manual environment-variable path:
+  - `node` is available
+  - the user can provide `MEMOBIRD_LOGININFO`
+  - the user can optionally provide `MEMOBIRD_TO_USER_ID`, `MEMOBIRD_TO_USER_NAME`, and `MEMOBIRD_PRINTER_GUID`
 
 If those conditions are not met, stop and explain the missing prerequisite.
 
 ## Preferred Workflow
 
 Follow this order. Skip a step only when a later step already proves the same fact more directly.
+
+### 0. Choose The Right Path
+
+Choose explicitly:
+
+- For agent-driven reverse engineering or local automation, use the dynamic path.
+- For human-facing setup docs, CI usage, or non-macOS usage, use the environment-variable path.
 
 ### 1. Start With Source, Not Blind Replay
 
@@ -80,6 +98,17 @@ Use `scripts/memobird-print.mjs` to recompute the live values at runtime:
 - Send `PrintPaper`
 
 This is the stable path. Do not persist raw `toUserId` or `guidList` values in the repository.
+
+### 3B. Document The Human-Friendly Env Path
+
+When the output is meant for a human operator instead of another agent:
+
+- Point them to `env.example.sh`
+- Explain how to copy `MEMOBIRD_LOGININFO` from Edge DevTools cookies
+- Explain how to copy `toUserId`, `toUserName`, and `guidList` from a captured `PrintPaper` request or from `--list --show-ids`
+- Explain that environment variables override live note and printer selection
+
+Do not tell humans they must decrypt local browser cookies if a manual env path is sufficient.
 
 ### 4. Use Dry Runs Before Real Printing
 
@@ -129,12 +158,14 @@ When preparing a public repository:
 The main helper is:
 
 - `scripts/memobird-print.mjs`
+- `env.example.sh`
 
 Use it to:
 
 - list available note targets and printers
 - preview a request without printing
 - print text through the current Edge login session
+- print text through manually supplied environment variables
 
 If the task needs deeper protocol analysis, open:
 
@@ -153,6 +184,7 @@ For an automation task, produce:
 
 - a working script invocation
 - a dry-run example
+- the chosen mode: dynamic session reuse or manual env setup
 - any environment limitations
 
 For a publication task, produce:
@@ -160,4 +192,3 @@ For a publication task, produce:
 - a sanitized repository
 - a concise README
 - no committed personal identifiers
-
