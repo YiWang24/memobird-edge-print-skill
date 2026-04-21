@@ -10,13 +10,20 @@ The web app centers on:
 - API endpoint: `https://w.memobird.cn/cn/ashx/DBInterface.ashx`
 - Main client script: `Scripts/Ajax/mailListAjax.js`
 
-The stable sequence is:
+The stable text-note sequence is:
 
 1. Read Edge login state from the local `logininfo` cookie.
 2. Call `GetLanderInfo`.
 3. Call `LoginWeb`.
 4. Read the current note targets and bound devices from those responses.
 5. Send `PrintPaper`.
+
+The stable image-print sequence is different:
+
+1. Resolve the current bound device and its wrapped `smartGuid`.
+2. Read the printer's numeric `smartType`.
+3. Upload the image file to `https://pdf.memobird.cn/print/imageFromFile`.
+4. Include `printType`, `paperType`, and `serverType`.
 
 Optional supporting calls:
 
@@ -52,6 +59,21 @@ In `mailListAjax.js`, the `printPaper()` function constructs the request roughly
 
 That immediately shows the important point: the print request is assembled from live page state, not from a compile-time secret.
 
+For image printing, the relevant frontend code is the `#picPrint` click handler in `mailListAjax.js`. It constructs a `FormData` payload with:
+
+- `file`
+- `smartGuid`
+- `type`
+- `printType`
+- `paperType`
+- `serverType`
+
+and posts it to:
+
+- `https://pdf.memobird.cn/print/imageFromFile`
+
+This is not the same flow as `PrintPaper`.
+
 ## Where The Wrapped Values Come From
 
 The live wrapped values arrive from normal API responses:
@@ -68,6 +90,8 @@ The result is that the correct implementation strategy is:
 - call `PrintPaper`
 
 Do not store captured wrapped values in the repository.
+
+For image printing, you still need the wrapped `smartGuid`, but you also need the printer's numeric `smartType`. That `smartType` is exposed in the same live device data used by the web UI.
 
 ## Browser Confirmation Procedure
 
@@ -98,6 +122,8 @@ The public script uses the local browser session instead of a copied capture:
 
 This makes the script portable for any user who is already logged in locally.
 
+For image printing, the script does not send `PrintPaper`. Instead it uploads the selected local image file directly to `pdf.memobird.cn/print/imageFromFile` with the resolved `smartGuid` and `smartType`.
+
 ## Redaction Rules
 
 When documenting or publishing:
@@ -117,8 +143,8 @@ Use this sequence in practice:
 ```bash
 node scripts/memobird-print.mjs --list
 node scripts/memobird-print.mjs --dry-run --text "hello"
+node scripts/memobird-print.mjs --image ./photo.png --dry-run
 node scripts/memobird-print.mjs --text "hello"
 ```
 
 Use `--show-ids` only for explicit debugging tasks.
-

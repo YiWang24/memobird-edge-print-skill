@@ -7,9 +7,13 @@ import path from 'node:path';
 import process from 'node:process';
 
 const API_URL = 'https://w.memobird.cn/cn/ashx/DBInterface.ashx';
+const IMAGE_API_URL = 'https://pdf.memobird.cn/print/imageFromFile';
 const REFERER = 'https://w.memobird.cn/cn/w/mailList.html';
 const DEFAULT_PROFILE = 'Default';
 const DEFAULT_WIDTH = 32;
+const DEFAULT_IMAGE_SERVER_TYPE = '2';
+const DEFAULT_IMAGE_PRINT_TYPE = '2';
+const DEFAULT_PAPER_TYPE = '2';
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
@@ -25,14 +29,23 @@ async function main() {
     return;
   }
 
+  validateOptionCombination(options);
+
   if (options.emitEnv && !options.showIds) {
     throw new Error('--emit-env requires --show-ids because it outputs real environment variable values.');
   }
 
-  const manualContextComplete = hasCompleteManualPrintContext(envConfig);
-  const hasManualEnvExportContext = Boolean(envConfig.loginInfo && manualContextComplete);
-  const needsLiveResolution = options.list || (!manualContextComplete) || (options.emitEnv && !hasManualEnvExportContext);
-  const needsSession = needsLiveResolution || !options.dryRun;
+  const contentMode = options.image ? 'image' : 'text';
+  const manualTextContextComplete = hasCompleteManualTextContext(envConfig);
+  const manualImageContextComplete = hasCompleteManualImageContext(envConfig, options);
+  const manualContextComplete = contentMode === 'image' ? manualImageContextComplete : manualTextContextComplete;
+  const hasManualEnvExportContext = Boolean(
+    envConfig.loginInfo &&
+    manualTextContextComplete &&
+    envConfig.printerType,
+  );
+  const needsLiveResolution = options.list || (options.emitEnv && !hasManualEnvExportContext) || !manualContextComplete;
+  const needsSession = needsLiveResolution || (contentMode === 'text' && !options.dryRun);
 
   const session = needsSession
     ? createMemobirdSession({
@@ -59,13 +72,104 @@ async function main() {
       : await loadFallbackSmartCores(session);
   }
 
-  if (options.list) {
+  if (options.list && !options.emitEnv) {
     printSessionSummary(lander, notes, smartCores, {
       showIds: options.showIds,
       sessionSource: session.source,
       envConfig,
     });
+    return;
+  }
+
+  if (options.emitEnv) {
+    const exportEnvConfig = needsLiveResolution
+      ? {
+        ...envConfig,
+        toUserId: '',
+        printerGuid: '',
+        printerType: '',
+      }
+      : envConfig;
+    const fromUserName = envConfig.fromUserName || lander.userName || login.userName || '';
+    const targetNote = resolveTargetNote({
+      envConfig: exportEnvConfig,
+      notes,
+      login,
+      lander,
+      requestedRecipient: options.recipient || envConfig.toUserName,
+    });
+    const targetPrinter = resolveTargetPrinter({
+      envConfig: exportEnvConfig,
+      smartCores,
+      requestedDevice: options.device || envConfig.printerName,
+      requestedPrinterType: options.printerType,
+      requireType: true,
+    });
+    const resolvedLoginInfo = envConfig.loginInfo || session?.loginInfo || '';
+    if (!resolvedLoginInfo) {
+      throw new Error('Cannot emit environment variables without a real MEMOBIRD_LOGININFO value.');
+    }
+
+    console.log(renderEnvFile({
+      loginInfo: resolvedLoginInfo,
+      fromUserName,
+      targetNote,
+      targetPrinter,
+      source: session?.source || 'manual-env',
+    }));
+    return;
+  }
+
+  const targetPrinter = resolveTargetPrinter({
+    envConfig,
+    smartCores,
+    requestedDevice: options.device,
+    requestedPrinterType: options.printerType,
+    requireType: contentMode === 'image',
+  });
+
+  if (contentMode === 'image') {
+    const imagePath = readImagePath(options.image);
+    const imagePrintType = normalizeImagePrintType(options.imagePrintType);
+    const paperType = normalizePaperType(options.paperType);
+    const imageInfo = getImageFileInfo(imagePath);
+
+    if (options.dryRun) {
+      const preview = {
+        mode: 'image',
+        endpoint: IMAGE_API_URL,
+        sessionSource: session?.source || 'manual-env:no-session',
+        manualOverrideFields: listActiveEnvOverrideFields(envConfig),
+        smartName: targetPrinter.smartName,
+        smartGuid: maybeRedact(targetPrinter.smartGuid, options.showIds),
+        smartType: targetPrinter.smartType,
+        imagePath,
+        imageFileName: imageInfo.fileName,
+        imageSizeBytes: imageInfo.sizeBytes,
+        mimeType: imageInfo.mimeType,
+        printType: imagePrintType,
+        paperType,
+        serverType: DEFAULT_IMAGE_SERVER_TYPE,
+      };
+      console.log(JSON.stringify(preview, null, 2));
       return;
+    }
+
+    const result = await printImageFile({
+      imagePath,
+      targetPrinter,
+      imagePrintType,
+      paperType,
+      serverType: DEFAULT_IMAGE_SERVER_TYPE,
+    });
+    assertImagePrintSuccess(result, 'imageFromFile');
+
+    console.log(`Printed image to "${targetPrinter.smartName}" (${imageInfo.fileName})`);
+    console.log(`Server message: ${result.msg || '发送成功'}`);
+    if (options.debug) {
+      console.log(JSON.stringify(result, null, 2));
+    }
+    return;
   }
 
   const rawText = readInputText(options);
@@ -80,11 +184,6 @@ async function main() {
     login,
     lander,
     requestedRecipient: options.recipient,
-  });
-  const targetPrinter = resolveTargetPrinter({
-    envConfig,
-    smartCores,
-    requestedDevice: options.device,
   });
   const html = formatPlainTextForMemobird(rawText, {
     width: options.width,
@@ -101,24 +200,9 @@ async function main() {
     t: String(Date.now()),
   });
 
-  if (options.emitEnv) {
-    const resolvedLoginInfo = envConfig.loginInfo || session?.loginInfo || '';
-    if (!resolvedLoginInfo) {
-      throw new Error('Cannot emit environment variables without a real MEMOBIRD_LOGININFO value.');
-    }
-
-    console.log(renderEnvFile({
-      loginInfo: resolvedLoginInfo,
-      fromUserName,
-      targetNote,
-      targetPrinter,
-      source: session?.source || 'manual-env',
-    }));
-    return;
-  }
-
   if (options.dryRun) {
     const preview = {
+      mode: 'text',
       sessionSource: session?.source || 'manual-env:no-session',
       manualOverrideFields: listActiveEnvOverrideFields(envConfig),
       fromUserName,
@@ -163,8 +247,12 @@ function parseArgs(argv) {
     envFile: '',
     text: '',
     file: '',
+    image: '',
     device: '',
     recipient: '',
+    printerType: '',
+    imagePrintType: DEFAULT_IMAGE_PRINT_TYPE,
+    paperType: DEFAULT_PAPER_TYPE,
     positional: [],
   };
 
@@ -204,6 +292,10 @@ function parseArgs(argv) {
       case '-f':
         options.file = requireValue(argv, ++i, arg);
         break;
+      case '--image':
+      case '-i':
+        options.image = requireValue(argv, ++i, arg);
+        break;
       case '--device':
       case '-d':
         options.device = requireValue(argv, ++i, arg);
@@ -219,6 +311,15 @@ function parseArgs(argv) {
       case '--width':
       case '-w':
         options.width = parseWidth(requireValue(argv, ++i, arg));
+        break;
+      case '--printer-type':
+        options.printerType = requireValue(argv, ++i, arg);
+        break;
+      case '--image-print-type':
+        options.imagePrintType = requireValue(argv, ++i, arg);
+        break;
+      case '--paper-type':
+        options.paperType = requireValue(argv, ++i, arg);
         break;
       default:
         if (arg.startsWith('-')) {
@@ -239,18 +340,24 @@ Usage:
   node scripts/memobird-print.mjs --list
   node scripts/memobird-print.mjs --dry-run --text "hello"
   node scripts/memobird-print.mjs --env-file .env.local --dry-run --text "hello"
+  node scripts/memobird-print.mjs --env-file .env.local --image ./photo.png --dry-run
+  node scripts/memobird-print.mjs --env-file .env.local --image ./photo.png --paper-type roll
   node scripts/memobird-print.mjs --device "My Memobird" --text "line one\\nline two"
   MEMOBIRD_LOGININFO='...' node scripts/memobird-print.mjs --list
-  node scripts/memobird-print.mjs --list --show-ids --emit-env
+  node scripts/memobird-print.mjs --show-ids --emit-env
   echo "print from stdin" | node scripts/memobird-print.mjs
 
 Options:
   -t, --text        Text to print
   -f, --file        Read text from a file
+  -i, --image       Image file to print through the image-print service
   -d, --device      Printer name to target, default is the first bound printer
   -r, --recipient   Note target name, default is self ("我")
   -p, --profile     Edge profile name, default is "Default"
   -w, --width       Wrap width in display cells, default is 32
+      --paper-type  Image paper type: roll|folded|2|1, default is roll (2)
+      --image-print-type  Image mode: text|rich|2|1, default is text (2)
+      --printer-type Numeric printer smartType for image mode when not auto-resolving
       --no-wrap     Disable automatic wrapping
       --dry-run     Show resolved request payload without printing
       --list        Show logged-in user, notes, and printers
@@ -267,8 +374,15 @@ Environment Variables:
   MEMOBIRD_TO_USER_NAME    Override toUserName in PrintPaper
   MEMOBIRD_PRINTER_GUID    Override guidList in PrintPaper
   MEMOBIRD_GUID_LIST       Alias for MEMOBIRD_PRINTER_GUID
+  MEMOBIRD_PRINTER_TYPE    Override printer smartType, used by image printing
   MEMOBIRD_PRINTER_NAME    Optional display name for the overridden printer
 `);
+}
+
+function validateOptionCombination(options) {
+  if (options.image && (options.text || options.file || options.positional.length > 0)) {
+    throw new Error('Use --image by itself. Do not combine it with --text, --file, or positional text.');
+  }
 }
 
 function requireValue(argv, index, flagName) {
@@ -315,6 +429,7 @@ function readEnvConfig() {
     toUserId: readEnvValue('MEMOBIRD_TO_USER_ID'),
     toUserName: readEnvValue('MEMOBIRD_TO_USER_NAME'),
     printerGuid: readEnvValue('MEMOBIRD_PRINTER_GUID') || readEnvValue('MEMOBIRD_GUID_LIST'),
+    printerType: readEnvValue('MEMOBIRD_PRINTER_TYPE'),
     printerName: readEnvValue('MEMOBIRD_PRINTER_NAME'),
   };
 }
@@ -374,12 +489,19 @@ function loadEnvFile(filePath) {
   }
 }
 
-function hasCompleteManualPrintContext(envConfig) {
+function hasCompleteManualTextContext(envConfig) {
   return Boolean(
     envConfig.fromUserName &&
     envConfig.toUserId &&
     envConfig.toUserName &&
     envConfig.printerGuid,
+  );
+}
+
+function hasCompleteManualImageContext(envConfig, options) {
+  return Boolean(
+    envConfig.printerGuid &&
+    (options.printerType || envConfig.printerType),
   );
 }
 
@@ -413,6 +535,7 @@ function createMemobirdSession({ profileName, loginInfo }) {
 
   return {
     source: loginInfo ? 'env:MEMOBIRD_LOGININFO' : `edge:${profileName}`,
+    loginInfo: resolvedLoginInfo,
     async getJson(dataType, extra = {}) {
       const params = new URLSearchParams({
         DataType: dataType,
@@ -513,21 +636,34 @@ function inferUserNameFromNotes(notes, userId) {
   return note?.userName || '';
 }
 
-function resolveTargetPrinter({ envConfig, smartCores, requestedDevice }) {
+function resolveTargetPrinter({ envConfig, smartCores, requestedDevice, requestedPrinterType, requireType = false }) {
   if (envConfig.printerGuid) {
+    const smartType = requestedPrinterType || envConfig.printerType || inferPrinterTypeFromSmartCores(smartCores, envConfig.printerGuid) || '';
+    if (requireType && !smartType) {
+      throw new Error('Image printing requires printer type. Set MEMOBIRD_PRINTER_TYPE, use --printer-type, or let the script resolve the printer from a live session.');
+    }
     return {
       smartGuid: envConfig.printerGuid,
       smartName: envConfig.printerName || requestedDevice || inferPrinterNameFromSmartCores(smartCores, envConfig.printerGuid) || 'Manual printer',
-      smartType: '',
+      smartType,
     };
   }
 
-  return selectTargetPrinter(smartCores, requestedDevice);
+  const printer = selectTargetPrinter(smartCores, requestedDevice);
+  if (requireType && !printer.smartType) {
+    throw new Error('Selected printer does not expose a usable smartType for image printing.');
+  }
+  return printer;
 }
 
 function inferPrinterNameFromSmartCores(smartCores, smartGuid) {
   const printer = Array.isArray(smartCores) ? smartCores.find((item) => item.smartGuid === smartGuid) : null;
   return printer?.smartName || '';
+}
+
+function inferPrinterTypeFromSmartCores(smartCores, smartGuid) {
+  const printer = Array.isArray(smartCores) ? smartCores.find((item) => item.smartGuid === smartGuid) : null;
+  return printer?.smartType ? String(printer.smartType) : '';
 }
 
 function selectTargetPrinter(smartCores, requestedDevice) {
@@ -595,6 +731,7 @@ function listActiveEnvOverrideFields(envConfig) {
   if (envConfig.toUserId) fields.push('MEMOBIRD_TO_USER_ID');
   if (envConfig.toUserName) fields.push('MEMOBIRD_TO_USER_NAME');
   if (envConfig.printerGuid) fields.push('MEMOBIRD_PRINTER_GUID');
+  if (envConfig.printerType) fields.push('MEMOBIRD_PRINTER_TYPE');
   if (envConfig.printerName) fields.push('MEMOBIRD_PRINTER_NAME');
   return fields;
 }
@@ -608,9 +745,126 @@ function renderEnvFile({ loginInfo, fromUserName, targetNote, targetPrinter, sou
     `MEMOBIRD_TO_USER_ID=${quoteEnvValue(targetNote.userId)}`,
     `MEMOBIRD_TO_USER_NAME=${quoteEnvValue(targetNote.userName)}`,
     `MEMOBIRD_PRINTER_GUID=${quoteEnvValue(targetPrinter.smartGuid)}`,
+    `MEMOBIRD_PRINTER_TYPE=${quoteEnvValue(targetPrinter.smartType)}`,
     `MEMOBIRD_PRINTER_NAME=${quoteEnvValue(targetPrinter.smartName)}`,
   ];
   return lines.join('\n');
+}
+
+function readImagePath(imagePath) {
+  const resolvedPath = path.resolve(imagePath);
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Image file not found: ${resolvedPath}`);
+  }
+
+  const stat = fs.statSync(resolvedPath);
+  if (!stat.isFile()) {
+    throw new Error(`Image path is not a file: ${resolvedPath}`);
+  }
+
+  return resolvedPath;
+}
+
+function getImageFileInfo(imagePath) {
+  const stat = fs.statSync(imagePath);
+  return {
+    fileName: path.basename(imagePath),
+    sizeBytes: stat.size,
+    mimeType: detectImageMimeType(imagePath),
+  };
+}
+
+function detectImageMimeType(imagePath) {
+  const extension = path.extname(imagePath).toLowerCase();
+  switch (extension) {
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.png':
+      return 'image/png';
+    case '.bmp':
+      return 'image/bmp';
+    case '.gif':
+      return 'image/gif';
+    case '.webp':
+      return 'image/webp';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
+function normalizeImagePrintType(value) {
+  const normalized = normalizeKey(value);
+  switch (normalized) {
+    case '1':
+    case 'rich':
+    case 'graphic':
+    case 'mixed':
+    case '图文':
+      return { id: '1', label: 'rich' };
+    case '2':
+    case 'text':
+    case 'plain':
+    case '文本':
+    case '':
+      return { id: '2', label: 'text' };
+    default:
+      throw new Error(`Invalid image print type: ${value}. Use text|rich|2|1.`);
+  }
+}
+
+function normalizePaperType(value) {
+  const normalized = normalizeKey(value);
+  switch (normalized) {
+    case '1':
+    case 'folded':
+    case 'fold':
+    case 'stack':
+    case '折叠':
+    case 'folded-paper':
+      return { id: '1', label: 'folded' };
+    case '2':
+    case 'roll':
+    case 'rolled':
+    case '卷纸':
+    case '':
+      return { id: '2', label: 'roll' };
+    default:
+      throw new Error(`Invalid paper type: ${value}. Use roll|folded|2|1.`);
+  }
+}
+
+async function printImageFile({ imagePath, targetPrinter, imagePrintType, paperType, serverType }) {
+  const imageBuffer = fs.readFileSync(imagePath);
+  const imageInfo = getImageFileInfo(imagePath);
+  const formData = new FormData();
+
+  formData.append('file', new Blob([imageBuffer], { type: imageInfo.mimeType }), imageInfo.fileName);
+  formData.append('smartGuid', targetPrinter.smartGuid);
+  formData.append('type', String(targetPrinter.smartType));
+  formData.append('printType', imagePrintType.id);
+  formData.append('paperType', paperType.id);
+  formData.append('serverType', String(serverType));
+
+  const response = await fetch(IMAGE_API_URL, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${body}`);
+  }
+
+  return parseJson(body, 'imageFromFile');
+}
+
+function assertImagePrintSuccess(payload, label) {
+  if (payload && (String(payload.code) === '1' || (typeof payload.data === 'string' && payload.data.trim() !== ''))) {
+    return;
+  }
+
+  throw new Error(`${label} failed: ${payload?.msg || JSON.stringify(payload)}`);
 }
 
 function quoteEnvValue(value) {

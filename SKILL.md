@@ -1,19 +1,19 @@
 ---
 name: Memobird Edge Print
-description: This skill should be used when the user asks to "抓包咕咕机", "reverse engineer Memobird Web", "send a Memobird print from Edge", "复用 Edge 登录态打印纸条", "排查 PrintPaper 接口", "自动打印咕咕机纸条", or "summarize the Memobird request flow".
-version: 0.1.0
+description: This skill should be used when the user asks to "抓包咕咕机", "reverse engineer Memobird Web", "send a Memobird print from Edge", "复用 Edge 登录态打印纸条", "排查 PrintPaper 接口", "自动打印咕咕机纸条", "打印图片到咕咕机", or "summarize the Memobird request flow".
+version: 0.2.0
 ---
 
 # Memobird Edge Print
 
-Use this skill to reverse engineer Memobird Web printing safely and to send paper notes by reusing the local Microsoft Edge login session on macOS.
+Use this skill to reverse engineer Memobird Web printing safely and to send paper notes or image prints by reusing the local Microsoft Edge login session on macOS when available.
 
 The core rule is simple: do not hardcode a packet capture and do not commit live identifiers. Memobird wraps `userId` and `smartGuid` values in short-lived encoded strings, so a one-off capture is useful for learning the protocol but is not a stable implementation strategy.
 
 Support two audiences:
 
 - For agents: prefer the dynamic workflow that recomputes fresh values from the current session.
-- For humans: prefer the environment-variable workflow documented in `README.en.md`, `README.zh-CN.md`, and `.env.example`.
+- For humans: prefer the environment-variable workflow documented in `README.md`, `README.zh-CN.md`, and `.env.example`.
 
 ## Goals
 
@@ -21,7 +21,8 @@ Accomplish four things:
 
 1. Identify the live request flow behind Memobird Web printing.
 2. Explain where each `PrintPaper` field comes from.
-3. Recompute fresh values from the current session instead of replaying stale captured data.
+3. Distinguish text-note printing from image printing, because they do not use the same endpoint.
+4. Recompute fresh values from the current session instead of replaying stale captured data.
 4. Keep cookies, wrapped identifiers, personal names, and device names out of published artifacts unless the user explicitly asks for them.
 5. Distinguish agent-facing reverse engineering guidance from human-facing environment variable setup guidance.
 
@@ -30,8 +31,11 @@ Accomplish four things:
 Use this skill when the task involves any of the following:
 
 - Reverse engineering Memobird Web or `DBInterface.ashx`
+- Reverse engineering the dedicated image-print service under `pdf.memobird.cn`
 - Tracing `PrintPaper`, `LoginWeb`, `GetLanderInfo`, `GetFriends`, or `GetSmartCoreByUserID`
+- Tracing `imageFromFile` or `images`
 - Printing a paper note by reusing the local Edge session
+- Printing an image to a bound Memobird device
 - Summarizing how to capture or reproduce the Memobird request flow
 - Building or reviewing a script that prints through Memobird
 - Creating sanitized public docs or repositories about Memobird printing automation
@@ -49,6 +53,7 @@ Before running the workflow, verify:
   - `node` is available
   - the user can provide `MEMOBIRD_LOGININFO`
   - the user can optionally provide `MEMOBIRD_TO_USER_ID`, `MEMOBIRD_TO_USER_NAME`, and `MEMOBIRD_PRINTER_GUID`
+  - for image printing without live resolution, the user can provide `MEMOBIRD_PRINTER_TYPE`
 
 If those conditions are not met, stop and explain the missing prerequisite.
 
@@ -80,6 +85,7 @@ Open `references/reverse-engineering.md` and use the source-first method:
 - Read the page script references from `mailList.html`
 - Open `Scripts/Ajax/mailListAjax.js`
 - Search for `PrintPaper`
+- Search for `imageFromFile` and `images`
 - Map each request field to the DOM or prior API response that produced it
 
 Use the local browser only to confirm behavior, not to define the final implementation:
@@ -105,6 +111,13 @@ Use `scripts/memobird-print.mjs` to recompute the live values at runtime:
 - Use the current `userId`, note target, and `smartGuid` from those fresh responses
 - Send `PrintPaper`
 
+For image printing, the stable runtime path is different:
+
+- resolve the current `smartGuid`
+- resolve the printer `smartType`
+- upload the image file to `https://pdf.memobird.cn/print/imageFromFile`
+- include `printType`, `paperType`, and `serverType`
+
 This is the stable path. Do not persist raw `toUserId` or `guidList` values in the repository.
 
 ### 3B. Document The Human-Friendly Env Path
@@ -114,6 +127,7 @@ When the output is meant for a human operator instead of another agent:
 - Point them to `.env.example`
 - Explain how to copy `MEMOBIRD_LOGININFO` from Edge DevTools cookies
 - Explain how to copy `toUserId`, `toUserName`, and `guidList` from a captured `PrintPaper` request or from `--list --show-ids`
+- Explain how to copy `smartType` from `--list` when preparing image printing manually
 - Explain how to use `--env-file .env.local`
 - Explain that environment variables override live note and printer selection
 
@@ -129,7 +143,7 @@ For human-facing docs, prefer a cross-platform `.env` file workflow:
 
 If the environment supports automatic session reuse, the agent can generate a local env block with:
 
-`node scripts/memobird-print.mjs --list --show-ids --emit-env`
+`node scripts/memobird-print.mjs --show-ids --emit-env`
 
 That output should stay local and should not be committed.
 
@@ -143,6 +157,7 @@ Run the script in this order:
 
 - `node scripts/memobird-print.mjs --list`
 - `node scripts/memobird-print.mjs --dry-run --text "test"`
+- `node scripts/memobird-print.mjs --image ./photo.png --dry-run`
 - `node scripts/memobird-print.mjs --text "real content"`
 
 Prefer `--dry-run` before every new environment or large change.
@@ -193,6 +208,7 @@ Use it to:
 - preview a request without printing
 - print text through the current Edge login session
 - print text through manually supplied environment variables
+- print images through the dedicated image-print service
 - load variables from `--env-file`
 - emit a `.env` block with `--emit-env`
 
@@ -206,6 +222,7 @@ For a reverse engineering task, produce:
 
 - the request sequence
 - the field origin for `PrintPaper`
+- the field origin for image printing
 - the reason captured IDs should not be hardcoded
 - the recommended runtime strategy
 
@@ -214,6 +231,7 @@ For an automation task, produce:
 - a working script invocation
 - a dry-run example
 - the chosen mode: dynamic session reuse or manual env setup
+- whether the task uses `PrintPaper` or `imageFromFile`
 - any environment limitations
 
 For a publication task, produce:
