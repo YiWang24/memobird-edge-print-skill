@@ -2,6 +2,88 @@
 
 默认英文文档：[`README.md`](./README.md)
 
+## 安装
+
+### 作为 CLI 使用
+
+不安装直接运行：
+
+```bash
+npx memobird-edge-print-skill --help
+```
+
+全局安装：
+
+```bash
+npm install -g memobird-edge-print-skill
+```
+
+全局安装后，这两个命令都可以使用：
+
+```bash
+memobird-edge-print-skill --help
+memobird-print --help
+```
+
+### 用 `npx` 安装到 Codex
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install --target codex
+```
+
+强制覆盖安装：
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install --target codex --force
+```
+
+### 用 `npx` 安装到 Claude Code
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install --target claude
+```
+
+强制覆盖安装：
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install --target claude --force
+```
+
+### 用 `npx` 安装到自定义目录
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install \
+  --dest "$HOME/.my-agent/skills/memobird-edge-print-skill"
+```
+
+### 用 `git clone` 一键安装到 Codex
+
+```bash
+git clone https://github.com/YiWang24/memobird-edge-print-skill.git \
+  "${CODEX_HOME:-$HOME/.codex}/skills/memobird-edge-print-skill"
+```
+
+### 用 `git clone` 一键安装到 Claude Code
+
+```bash
+git clone https://github.com/YiWang24/memobird-edge-print-skill.git \
+  "$HOME/.claude/commands/memobird-edge-print-skill"
+```
+
+### 用 sparse checkout 做轻量安装
+
+如果你只想拿这个 skill 目录，不想拉完整历史：
+
+```bash
+git clone --depth=1 --filter=blob:none --sparse \
+  https://github.com/YiWang24/memobird-edge-print-skill.git \
+  /tmp/memobird-edge-print-skill && \
+  git -C /tmp/memobird-edge-print-skill sparse-checkout set . && \
+  mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills" && \
+  cp -R /tmp/memobird-edge-print-skill \
+    "${CODEX_HOME:-$HOME/.codex}/skills/memobird-edge-print-skill"
+```
+
 面向人类使用者的文档，适用于 macOS、Linux 和 Windows。
 
 ## 项目概览

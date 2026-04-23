@@ -1,0 +1,45 @@
+{
+  "name": "memobird-edge-print-skill",
+  "version": "0.3.0",
+  "description": "Codex skill and CLI for Memobird text and image printing through live sessions or .env-based automation.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "memobird-edge-print-skill": "scripts/memobird-print.mjs",
+    "memobird-print": "scripts/memobird-print.mjs",
+    "memobird-edge-print-install": "scripts/install-skill.mjs"
+  },
+  "files": [
+    "SKILL.md",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    ".env.example",
+    "scripts",
+    "references"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YiWang24/memobird-edge-print-skill.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YiWang24/memobird-edge-print-skill/issues"
+  },
+  "homepage": "https://github.com/YiWang24/memobird-edge-print-skill#readme",
+  "keywords": [
+    "memobird",
+    "printer",
+    "printing",
+    "skill",
+    "codex",
+    "automation",
+    "cli"
+  ],
+  "scripts": {
+    "test": "node scripts/memobird-print.mjs --help >/dev/null && node scripts/install-skill.mjs --help >/dev/null",
+    "pack:check": "npm pack --dry-run"
+  }
+}

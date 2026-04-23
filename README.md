@@ -13,6 +13,88 @@ It supports:
 
 Chinese documentation: [README.zh-CN.md](./README.zh-CN.md)
 
+## Installation
+
+### CLI usage
+
+Run without installing:
+
+```bash
+npx memobird-edge-print-skill --help
+```
+
+Install globally:
+
+```bash
+npm install -g memobird-edge-print-skill
+```
+
+After a global install, both commands work:
+
+```bash
+memobird-edge-print-skill --help
+memobird-print --help
+```
+
+### Install as a Codex skill with `npx`
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install --target codex
+```
+
+Force-reinstall:
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install --target codex --force
+```
+
+### Install as a Claude Code command bundle with `npx`
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install --target claude
+```
+
+Force-reinstall:
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install --target claude --force
+```
+
+### Install into a custom skill directory with `npx`
+
+```bash
+npx -p memobird-edge-print-skill memobird-edge-print-install \
+  --dest "$HOME/.my-agent/skills/memobird-edge-print-skill"
+```
+
+### One-line `git clone` install for Codex
+
+```bash
+git clone https://github.com/YiWang24/memobird-edge-print-skill.git \
+  "${CODEX_HOME:-$HOME/.codex}/skills/memobird-edge-print-skill"
+```
+
+### One-line `git clone` install for Claude Code
+
+```bash
+git clone https://github.com/YiWang24/memobird-edge-print-skill.git \
+  "$HOME/.claude/commands/memobird-edge-print-skill"
+```
+
+### One-line sparse checkout install
+
+If you want only this skill directory and not the whole git history:
+
+```bash
+git clone --depth=1 --filter=blob:none --sparse \
+  https://github.com/YiWang24/memobird-edge-print-skill.git \
+  /tmp/memobird-edge-print-skill && \
+  git -C /tmp/memobird-edge-print-skill sparse-checkout set . && \
+  mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills" && \
+  cp -R /tmp/memobird-edge-print-skill \
+    "${CODEX_HOME:-$HOME/.codex}/skills/memobird-edge-print-skill"
+```
+
 ## Quick Start
 
 ### 1. Copy the env template
