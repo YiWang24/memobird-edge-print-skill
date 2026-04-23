@@ -95,6 +95,48 @@ git clone --depth=1 --filter=blob:none --sparse \
     "${CODEX_HOME:-$HOME/.codex}/skills/memobird-edge-print-skill"
 ```
 
+## Automated npm Publishing
+
+This repository includes a GitHub Actions workflow at [`.github/workflows/publish-npm.yml`](./.github/workflows/publish-npm.yml).
+
+Behavior:
+
+- runs on every push to `main`
+- reads `name` and `version` from `package.json`
+- publishes the current version if it has not been published yet
+- automatically bumps the patch version when the current version already exists on npm
+- commits the bumped `package.json` back to `main` after a successful publish
+
+That means a normal push to `main` can produce a new npm release without a manual versioning step.
+
+### Required GitHub secret
+
+Configure this repository secret before relying on automatic publishing:
+
+- `NPM_TOKEN`
+
+Once the secret is set, the workflow can publish automatically after each push to `main`.
+
+### Recommended release flow
+
+1. Update code and documentation.
+2. Merge or push to `main`.
+3. Let GitHub Actions publish automatically.
+4. If the current version was already used, the workflow bumps the patch version and commits it back for you.
+
+### Controlling the version number
+
+- For routine updates, do nothing. The workflow auto-increments the patch version when needed.
+- For an intentional minor or major release, update `package.json` before merging so the workflow publishes that version first.
+
+### Note on security
+
+This workflow uses a classic npm token for immediate compatibility.
+
+The current npm recommendation is to prefer trusted publishing with GitHub Actions OIDC when possible. See:
+
+- [npm trusted publishing docs](https://docs.npmjs.com/trusted-publishers/)
+
 ## Quick Start
 
 ### 1. Copy the env template

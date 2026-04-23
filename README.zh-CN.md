@@ -84,6 +84,48 @@ git clone --depth=1 --filter=blob:none --sparse \
     "${CODEX_HOME:-$HOME/.codex}/skills/memobird-edge-print-skill"
 ```
 
+## npm 自动发布
+
+仓库已经包含 GitHub Actions 工作流：[`.github/workflows/publish-npm.yml`](./.github/workflows/publish-npm.yml)
+
+工作流行为：
+
+- 每次 push 到 `main` 时触发
+- 从 `package.json` 读取包名和版本
+- 如果当前版本还没发过，就直接发布
+- 如果当前版本已经存在于 npm，就自动把 patch 版本加一
+- 发布成功后，会把更新后的 `package.json` 自动提交回 `main`
+
+这意味着普通代码更新推到 `main` 后，也可以自动产出新的 npm 版本，不需要每次手动改版本号。
+
+### 必需的 GitHub Secret
+
+启用自动发布前，需要先在仓库里配置这个 secret：
+
+- `NPM_TOKEN`
+
+配置完成后，只要 push 到 `main`，GitHub Actions 就会自动发布。
+
+### 推荐发布流程
+
+1. 修改代码和文档。
+2. 合并或 push 到 `main`。
+3. 等 GitHub Actions 自动发布新版本。
+4. 如果当前版本已经被发布过，workflow 会自动补一个新的 patch 版本并回写到仓库。
+
+### 如何控制版本号
+
+- 日常小改动不需要手动处理，workflow 会在需要时自动递增 patch 版本。
+- 如果你要发一个明确的 minor / major 版本，可以在合并前先手动修改 `package.json`，workflow 会优先发布你指定的版本。
+
+### 安全说明
+
+当前工作流为了兼容性使用 npm token。
+
+npm 官方当前更推荐 GitHub Actions OIDC 的 trusted publishing。参考：
+
+- [npm trusted publishing docs](https://docs.npmjs.com/trusted-publishers/)
+
 面向人类使用者的文档，适用于 macOS、Linux 和 Windows。
 
 ## 项目概览
