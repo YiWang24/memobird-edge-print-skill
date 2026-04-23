@@ -1,6 +1,6 @@
 {
   "name": "memobird-edge-print-skill",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Codex skill and CLI for Memobird text and image printing through live sessions or .env-based automation.",
   "license": "MIT",
   "type": "module",
