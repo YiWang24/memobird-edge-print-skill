@@ -8,6 +8,7 @@ name: Publish npm package
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: publish-npm
@@ -60,15 +61,6 @@ jobs:
 
           echo "version=$candidate" >> "$GITHUB_OUTPUT"
           echo "bumped=$bumped" >> "$GITHUB_OUTPUT"
-
-      - name: Verify npm token secret exists
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "NPM_TOKEN secret is not configured." >&2
-            exit 1
-          fi
 
       - name: Run tests
         run: npm test

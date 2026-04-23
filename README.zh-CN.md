@@ -95,16 +95,45 @@ git clone --depth=1 --filter=blob:none --sparse \
 - 如果当前版本还没发过，就直接发布
 - 如果当前版本已经存在于 npm，就自动把 patch 版本加一
 - 发布成功后，会把更新后的 `package.json` 自动提交回 `main`
+- 已开启 GitHub OIDC 所需的 `id-token: write`
+- 在 npm 侧完成 trusted publishing 绑定后，可以不依赖长期 token 发布
 
 这意味着普通代码更新推到 `main` 后，也可以自动产出新的 npm 版本，不需要每次手动改版本号。
 
-### 必需的 GitHub Secret
+### 认证方式
 
-启用自动发布前，需要先在仓库里配置这个 secret：
+- 首选：npm trusted publishing + GitHub Actions OIDC
+- 兼容兜底：仓库 secret `NPM_TOKEN`
 
-- `NPM_TOKEN`
+这个仓库的 workflow 现在已经支持 OIDC。只要在 npm 包侧把 trusted publisher 绑定到当前仓库和 workflow，`npm publish` 就可以不再依赖长期 token。
 
-配置完成后，只要 push 到 `main`，GitHub Actions 就会自动发布。
+在 npm 侧绑定完成之前，workflow 仍然可以继续通过 `NPM_TOKEN` 发布，避免发布链中断。
+
+### 一次性配置 trusted publishing
+
+需要绑定的对象是：
+
+- 包名：`memobird-edge-print-skill`
+- 仓库：`YiWang24/memobird-edge-print-skill`
+- workflow 文件：`publish-npm.yml`
+
+如果你本机当前的 npm 登录态支持交互式 2FA，可以直接执行：
+
+```bash
+npm trust github memobird-edge-print-skill \
+  --repo YiWang24/memobird-edge-print-skill \
+  --file publish-npm.yml \
+  --yes
+```
+
+如果本机 npm 登录态不支持 `npm trust`，就去 npm 网页端配置：
+
+1. 打开这个包的 npm settings。
+2. 进入 trusted publishing / trusted publisher 相关设置。
+3. 添加 GitHub Actions，仓库填 `YiWang24/memobird-edge-print-skill`。
+4. workflow 文件名填 `publish-npm.yml`。
+
+配置完成后，如果你想彻底切成无 token 模式，可以再删除仓库里的 `NPM_TOKEN` secret。
 
 ### 推荐发布流程
 
@@ -120,11 +149,10 @@ git clone --depth=1 --filter=blob:none --sparse \
 
 ### 安全说明
 
-当前工作流为了兼容性使用 npm token。
-
-npm 官方当前更推荐 GitHub Actions OIDC 的 trusted publishing。参考：
+npm 官方当前更推荐 GitHub Actions OIDC 的 trusted publishing。这个仓库现在已经支持这种模式。参考：
 
 - [npm trusted publishing docs](https://docs.npmjs.com/trusted-publishers/)
+- [npm trust CLI docs](https://docs.npmjs.com/cli/v11/commands/npm-trust/)
 
 面向人类使用者的文档，适用于 macOS、Linux 和 Windows。
 

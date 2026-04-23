@@ -106,16 +106,45 @@ Behavior:
 - publishes the current version if it has not been published yet
 - automatically bumps the patch version when the current version already exists on npm
 - commits the bumped `package.json` back to `main` after a successful publish
+- requests GitHub OIDC tokens with `id-token: write`
+- can use npm trusted publishing when the package is linked to this workflow
 
 That means a normal push to `main` can produce a new npm release without a manual versioning step.
 
-### Required GitHub secret
+### Authentication modes
 
-Configure this repository secret before relying on automatic publishing:
+- Preferred: npm trusted publishing via GitHub Actions OIDC
+- Fallback: `NPM_TOKEN` repository secret
 
-- `NPM_TOKEN`
+The workflow is already OIDC-ready. Once npm trusted publishing is configured for this package, `npm publish` can authenticate without a long-lived token.
 
-Once the secret is set, the workflow can publish automatically after each push to `main`.
+Until that npm-side trust relationship is configured, the workflow can continue to publish through `NPM_TOKEN`.
+
+### One-time trusted publishing setup
+
+Link the package to this exact GitHub workflow:
+
+- package: `memobird-edge-print-skill`
+- repository: `YiWang24/memobird-edge-print-skill`
+- workflow file: `publish-npm.yml`
+
+If you are locally signed in to npm with an interactive account session that can satisfy 2FA, this command configures it:
+
+```bash
+npm trust github memobird-edge-print-skill \
+  --repo YiWang24/memobird-edge-print-skill \
+  --file publish-npm.yml \
+  --yes
+```
+
+If your npm login does not support `npm trust`, configure it in the npm web UI instead:
+
+1. Open the package settings on npm.
+2. Go to the trusted publishing / trusted publisher section.
+3. Add GitHub Actions for `YiWang24/memobird-edge-print-skill`.
+4. Set the workflow filename to `publish-npm.yml`.
+
+After that, you can remove `NPM_TOKEN` from the repository secrets if you want token-free publishing only.
 
 ### Recommended release flow
 
@@ -131,11 +160,10 @@ Once the secret is set, the workflow can publish automatically after each push t
 
 ### Note on security
 
-This workflow uses a classic npm token for immediate compatibility.
-
-The current npm recommendation is to prefer trusted publishing with GitHub Actions OIDC when possible. See:
+The current npm recommendation is to prefer trusted publishing with GitHub Actions OIDC when possible. This repository now supports that mode. See:
 
 - [npm trusted publishing docs](https://docs.npmjs.com/trusted-publishers/)
+- [npm trust CLI docs](https://docs.npmjs.com/cli/v11/commands/npm-trust/)
 
 ## Quick Start
 
